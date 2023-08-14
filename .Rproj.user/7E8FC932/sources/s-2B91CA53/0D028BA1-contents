@@ -1,0 +1,424 @@
+#load necessary libraries
+library(mgcv)
+library(ggplot2)
+library(pROC)
+library(knitr)
+library(dplyr)
+library(sp)
+library(reshape)
+library(ggpubr)
+library(gtools)
+library(raster)
+library(gratia)
+
+#load in data
+no_zeroes_combined <- read.csv(paste(getwd(),"/Data/no_zeroes_combined.csv", sep = ""))
+
+#load in spatial domain shape file
+shp <- shapefile("Data/ForNathan/MaritimesRegionEcosystemAssessmentStrata_SSsubset_ForSeaCuke.shp")
+
+#if RDMV is NA, set to zero
+no_zeroes_combined$DEM_RDMV <- ifelse(is.na(no_zeroes_combined$DEM_RDMV), 0, no_zeroes_combined$DEM_RDMV)
+
+#grab NS, New Brunswick, PEI, NFLD maps for later plots
+map <- raster::getData(country = "CAN", level = 1)
+map <- map[which(map$NAME_1 == "Nova Scotia"|map$NAME_1 == "Prince Edward Island"|map$NAME_1 == "New Brunswick"|map$NAME_1 == "Newfoundland and Labrador"),]
+map <- spTransform(map, crs("+datum=WGS84 +proj=utm +zone=20T +units=km"))
+#grab Maine map for later plots
+map1 <- raster::getData(country = "USA", level = 1)
+map1 <- map1[which(map1$NAME_1 == "Maine"),]
+map1 <- spTransform(map1, crs("+datum=WGS84 +proj=utm +zone=20T +units=km"))
+
+##########################################PRESENCE MODEL###########################################
+
+#split data into training, validation, and testing sets
+training <- which(no_zeroes_combined$year < 2016)
+testing <- which(no_zeroes_combined$year > 2015)
+
+#fit the model on the training data
+presence_model <- gam(presence~te(UTMX, UTMY, year, k = c(100, 5), 
+                      bs = c("ds","tp"), m = list(c(1,0.5),NA), d = c(2,1)) + 
+                      s(BtmTempBNAM, k = 5) + s(log(-DEM), k = 5) + 
+                      s(sqrt(DEM_Slope), k = 5) + s(DEM_RDMV, k = 5) + 
+                      s(DEM_Easterness, DEM_Northerness, k = 25), 
+                      family = "binomial", 
+                      data = no_zeroes_combined[training,], 
+                      method = "REML") 
+
+#plot the spatio-temporal smooth 
+draw(presence_model, select = "te(UTMX,UTMY,year)")+   geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  theme(text=element_text(size=16, family="serif")) +
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
+  coord_cartesian(ylim = c(4700, 5200), xlim = c(175, 925)) + 
+  geom_point(aes(x = UTMX, y = UTMY), data = no_zeroes_combined[training,], size = 0.05, col = "white", alpha = 0.37) + 
+  scale_fill_gradientn(colours = viridis(100)) + ggtitle("f(Eastings, Northings, Year)") + 
+  xlab("Eastings") + ylab("Northings") + labs(fill = "Partial\nEffect")
+#plot the other model smooths
+par(mfrow = c(2,2), mar = c(5,5,4,2))
+plot(presence_model, select = 2, shade = TRUE, ylim = c(-3,1.2), 
+     shade.col = "light blue", xlab = "Log(Depth [in m])", ylab = "f(Log(Depth))", 
+     family = "serif", cex.axis = 2, cex.lab = 2)
+plot(presence_model, select = 3, shade = TRUE, ylim = c(-3,1.2), 
+     shade.col = "light blue", xlab = "Bottom Temperature (°C)", 
+     ylab = "f(Bottom Temperature)", family = "serif", cex.lab = 2, cex.axis = 2)
+plot(presence_model, select = 4, shade = TRUE, main = "f(Easterness, Northerness)", 
+     family = "serif", cex.main = 2, cex.axis = 2, cex.lab = 2, scheme = 2, xlab = "Easterness", ylab = "Northerness")
+
+#ready information to put into gam summary table for presence model
+a <- data.frame(format(round(summary(presence_model)$p.table, 2), digits = 2))
+colnames(a) <- c("estimate", "std. error", "Z","p-value")
+rownames(a) <- c("Intercept")
+b <- data.frame(format(round(summary(presence_model)$s.table, 2), digits = 3))
+colnames(b) <- c("edf","ref. df","chi-sq.","p-value")
+rownames(b) <- c("f(Eastings, Northings)", "f(Log(Depth))", "f(Bottom Temperature)", 
+                 "f(Easterness, Northerness)")
+deviance <- data.frame(row.names = c("Null", "Residual"))
+deviance$x <- c(round(presence_model$null.deviance, 3), round(presence_model$deviance, 3))  
+colnames(deviance) <- "Deviance"
+#make the table
+a <- kable(list(a,b, deviance), format = "latex", caption = "Presence Model", align = "rc")
+
+#get training AUC-ROC
+auc(no_zeroes_combined[training, "presence"], predict(presence_model, type = "response"))
+#compute the training data's residuals
+no_zeroes_combined[training, "residuals_presence"] <- residuals(presence_model, type = "response")
+
+#geographically plot the training data's residuals on the initial presence model
+a <- ggplot() + geom_point(size = 0.9, aes(x = UTMX, y = UTMY, col = residuals_presence),
+                      data = no_zeroes_combined[training,]) + 
+  scale_colour_gradientn(colours = viridis(100)) +
+  labs(col = "Response\nResidual\n") + theme(text=element_text(size=16, family="serif")) + 
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  xlab("Eastings") + ylab("Northings") + coord_cartesian(ylim = c(4650, 5250), xlim = c(125, 1000)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+#temporally plot the training data's residuals on the final presence model
+b <- ggplot(aes(x = year, y = residuals_presence), data = no_zeroes_combined[training,]) + 
+  geom_point(size = 0.15) + geom_smooth(method = "loess") + ylab("Response Residual") + xlab("Year") + 
+  theme(text=element_text(size=16, family="serif"))
+ggarrange(a, NULL, b, ncol = 1, heights = c(1,0.05,0.5)) #plot together
+
+#check that difference between snow crab and RV residuals isn't obvious
+ggplot(aes(x = snowcrab, y = residuals_presence), data = no_zeroes_combined[training,]) + 
+  geom_boxplot(size = 0.15) + ylab("Response Residual") + xlab("Snow Crab Survey") + theme(text=element_text(size=12, family="serif"))
+
+#get final measure of AUC on holdout set
+predicted <- predict(presence_model, newdata = no_zeroes_combined[testing,], type = "response")
+auc(no_zeroes_combined[testing, "presence"], predicted)
+
+#######################################################CPUE MODEL###################################################
+
+#split data into training, validation, and testing sets
+no_zeroes_combined_CPUE <- no_zeroes_combined[which(is.na(no_zeroes_combined$std.WGT)==FALSE&no_zeroes_combined$std.WGT!=0),]
+training <- which(no_zeroes_combined_CPUE$year < 2016)
+testing <- which(no_zeroes_combined_CPUE$year > 2015)
+
+#fit the chosen model with all the training data
+CPUE_model <- gam(log(std.WGT) ~ te(UTMX, UTMY, year, k = c(100, 5), 
+                    bs = c("ds","tp"), m = list(c(1,0.5), NA), d = c(2,1)) + 
+                    s(log(-DEM), k = 5) + s(BtmTempBNAM, k = 5) + s(DEM_Easterness, DEM_Northerness, k = 25) +
+                    s(sqrt(DEM_Slope), k = 5) + s(DEM_RDMV, k = 5) + as.numeric(snowcrab), 
+                      family = "gaussian", 
+                      data = no_zeroes_combined_CPUE[training,], 
+                      method = "REML") 
+
+#plot the spatio-temporal smooth 
+draw(CPUE_model, select = "te(UTMX,UTMY,year)")+   geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  theme(text=element_text(size=16, family="serif")) +
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
+  coord_cartesian(ylim = c(4750, 5150), xlim = c(250, 900)) + 
+  geom_point(aes(x = UTMX, y = UTMY), data = no_zeroes_combined_CPUE[training,], size = 0.05, col = "white", alpha = 0.37) + 
+  scale_fill_gradientn(colours = viridis(100)) + ggtitle("f(Eastings, Northings, Year)") +
+  xlab("Eastings") + ylab("Northings") + labs(fill = "Partial\nEffect")
+#plot the other model smooths
+plot(CPUE_model, select = 1, shade = TRUE, main = "f(Eastings, Northings, Year)", 
+     family = "serif", n3 = 4, too.far = 0.05, cex.axis = 1.5, cex.main = 1.5, cex.lab = 1.5, scheme = 2, xlab = "Eastings (km)", ylab = "Northings (km)")
+par(mfrow = c(2,2), mar = c(5,5,4,2))
+plot(CPUE_model, select = 2, shade = TRUE, ylim = c(-3,1.2), 
+     shade.col = "light blue", xlab = "Log(Depth [in m])", ylab = "f(Log(Depth))", 
+     family = "serif", cex.axis = 2, cex.lab = 2)
+plot(CPUE_model, select = 3, shade = TRUE, main = "f(Easterness, Northerness)", 
+     family = "serif", cex.main = 2, cex.axis = 2, cex.lab = 2, scheme = 2, xlab = "Easterness", ylab = "Northerness")
+
+#compute the training data's residuals
+no_zeroes_combined_CPUE[training, "residuals_CPUE"] <- residuals(CPUE_model, type = "response")
+#MAE on training
+MAE <- mean(abs(no_zeroes_combined_CPUE[training, "residuals_CPUE"]))
+
+#ready information to put into gam summary table for CPUE model
+a <- data.frame(format(round(summary(CPUE_model)$p.table, 2), digits = 2))
+colnames(a) <- c("estimate", "std. error", "Z","p-value")
+rownames(a) <- c("Intercept", "Snow Crab Survey")
+b <- data.frame(format(round(summary(CPUE_model)$s.table, 2), digits = 3))
+colnames(b) <- c("edf","ref. df","chi-sq.","p-value")
+rownames(b) <- c("f(Eastings, Northings)", "f(Log(Depth))", 
+                 "f(Easterness, Northerness)")
+deviance <- data.frame(row.names = c("Mean Absolute Error"))
+deviance$x <- c(round(MAE, 3))  
+colnames(deviance) <- "Training Fit"
+#make the table
+a <- kable(list(a,b, deviance), format = "latex", caption = "CPUE Model", align = "rc")
+
+#geographically plot the training data's residuals on the CPUE model
+a <- ggplot() + geom_point(size = 0.9, aes(x = UTMX, y = UTMY, col = residuals_CPUE),
+                      data = no_zeroes_combined_CPUE[training,]) + 
+  scale_colour_gradientn(colours = viridis(100), limits = c(-5,5)) +
+  labs(col = "Residual") + theme(text=element_text(size=16, family="serif")) + 
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  xlab("Eastings") + ylab("Northings") + facet_wrap(~year) + 
+  coord_cartesian(ylim = c(4650, 5250), xlim = c(75, 1050)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+#temporally plot the training data's residuals on the final CPUE model
+b <- ggplot(aes(x = year, y = residuals_CPUE), data = no_zeroes_combined_CPUE[training,]) + 
+  geom_point(size = 0.15) + geom_smooth(method = "loess") + ylab("Residual") + xlab("Year") + 
+  theme(text=element_text(size=16, family="serif"))
+ggarrange(a, NULL, b, ncol = 1, heights = c(1,0.05,0.5)) #plot together
+
+#check that difference between snow crab and RV residuals isn't obvious
+ggplot(aes(x = snowcrab, y = residuals_CPUE), data = no_zeroes_combined_CPUE[training,]) + 
+  geom_boxplot(size = 0.15) + ylab("Residual") + xlab("Snow Crab Survey") + theme(text=element_text(size=16, family="serif"))
+
+#residual vs fits
+fits <- fitted(CPUE_model)
+a <- ggplot() + geom_point(aes(y = residuals_CPUE, x = fits), data = no_zeroes_combined_CPUE[training,], alpha =.5) + 
+  theme(text=element_text(size=16, family="serif")) + 
+  ggtitle("Residuals vs. Fits Plot") + xlab("Fitted Value") + ylab("Residual")
+#qqplot
+b <- ggplot(data = no_zeroes_combined_CPUE[training,], aes(sample = residuals_CPUE)) + stat_qq(size = I(0.2)) + stat_qq_line() +
+  ggtitle("Normal Q-Q Plot of Residuals") + ylab("Residual Quantile") + xlab("Theoretical Quantile") + 
+  theme(text=element_text(size=16, family="serif"))
+ggarrange(a, NULL, b, ncol = 1, heights = c(1,0.05,1)) #plot together
+
+#get final measure of MAE on holdout set
+no_zeroes_combined_CPUE$std.WGT_log <- log(no_zeroes_combined_CPUE$std.WGT)
+test_residual <- no_zeroes_combined_CPUE[testing, "std.WGT_log"] - predict(CPUE_model, newdata = no_zeroes_combined_CPUE[testing,])
+MAE_CPUE_model <- mean(abs(test_residual))
+
+############################################PREDICTIONS##################################################
+
+#reload spatial domain shape file
+shp <- shapefile("Data/ForNathan/MaritimesRegionEcosystemAssessmentStrata_SSsubset_ForSeaCuke.shp")
+
+###FUNCTION TO CREATE RASTER STACK OF YEARLY AVERAGES###
+yearly_average_stack <- function(file_subset)
+{
+  years <- seq(2000, 2019, by = 1)
+  
+  #create raster stack for each year... then get average for each month
+  raster_stack <- list()
+  mean_raster_stack <- list()
+  for (i in 1:length(years))
+  {
+    raster_stack[[i]] <- stack(file_subset[grep(paste(years[i], ".asc", sep = ""), file_subset)])
+    mean_raster_stack[[i]] <- calc(raster_stack[[i]], fun = mean)
+  }
+  #put each year's average into a stack
+  stack <- stack(mean_raster_stack)
+  return(stack)
+}
+
+#increase memory limit
+memory.limit(size = 50000)
+
+#grab list of desired BNAM files
+full_file_list <- list.files("C:/Users/natha/Research/Data/BNAM/BNAM_1990-2019_monthly", full.names = TRUE, recursive = TRUE)
+BtmTempFiles <- full_file_list[grepl("BtmTemp",full_file_list)==TRUE&grepl(".asc",full_file_list)==TRUE]
+
+#load in DEM files
+DEM = raster("C:/Users/natha/Research/Data/TASSE_attributes_MaritimeDEM/BathyCHS_GEBCO_SEAM_mixedData_MartitimeExtentClip_100m_LatLong.asc")
+Easterness = raster("C:/Users/natha/Research/Data/TASSE_attributes_MaritimeDEM/TASSE_Attributes/east_bathych/w001001.adf")
+Northerness = raster("C:/Users/natha/Research/Data/TASSE_attributes_MaritimeDEM/TASSE_Attributes/nort_bathych/w001001.adf")
+Slope = raster("C:/Users/natha/Research/Data/TASSE_attributes_MaritimeDEM/TASSE_Attributes/slop_bathych/w001001.adf")
+RDMV = raster("C:/Users/natha/Research/Data/TASSE_attributes_MaritimeDEM/TASSE_Attributes/RDMV_bathych/w001001.adf")
+
+#crop and mask DEM rasters to our spatial domain
+DEM <- mask(crop(DEM, shp), shp)
+Easterness <- mask(crop(Easterness, shp), shp)
+Northerness <- mask(crop(Northerness, shp), shp)
+Slope <- mask(crop(Slope, shp), shp)
+RDMV <- mask(crop(RDMV, shp), shp)
+#set parts of DEM to NA if can't be log-transformed
+DEM <- reclassify(DEM, cbind(0, Inf, NA), left = TRUE, right = TRUE)
+
+#get an average temp. raster for each year and then crop 
+stack_BtmTemp <- yearly_average_stack(BtmTempFiles)
+stack_BtmTemp <- mask(crop(stack_BtmTemp, shp), shp)
+
+#project all environmental rasters in UTM
+DEM <- projectRaster(DEM, crs = "+proj=utm +zone=20T +datum=WGS84 +units=km")
+Easterness <- projectRaster(Easterness, crs = "+proj=utm +zone=20T +datum=WGS84 +units=km")
+Northerness <- projectRaster(Northerness, crs = "+proj=utm +zone=20T +datum=WGS84 +units=km")
+Slope <- projectRaster(Slope, crs = "+proj=utm +zone=20T +datum=WGS84 +units=km")
+RDMV <- projectRaster(RDMV, crs = "+proj=utm +zone=20T +datum=WGS84 +units=km")
+stack_BtmTemp <- projectRaster(stack_BtmTemp, crs = "+proj=utm +zone=20T +datum=WGS84 +units=km")
+
+#make the BNAM temp. raster comparable to DEM
+stack_BtmTemp <- resample(stack_BtmTemp, DEM)
+
+#create UTMX and UTMY rasters (and crop)
+UTMX <- init(DEM, 'x')
+UTMY <- init(DEM, 'y')
+
+#create a raster for snowcrab indicator
+snowcrab_ind <- setValues(DEM, TRUE)
+
+#create vectors to hold predictions
+stack_predict_zero <- c()
+stack_predict_CPUE <- c()
+#predict for each year and fill those vectors (to create raster stacks)
+for (i in 1:nlayers(stack_BtmTemp))
+{
+  print(i)
+  year_raster <- setValues(DEM, i+1999)
+  stack_new <- stack(c(stack_BtmTemp[[i]], DEM, Slope, Easterness, Northerness, 
+                       RDMV, UTMX, UTMY, snowcrab_ind, year_raster))
+  names(stack_new) <- c("BtmTempBNAM", "DEM", "DEM_Slope", "DEM_Easterness", "DEM_Northerness", "DEM_RDMV",
+                        "UTMX","UTMY", "snowcrab", "year")
+  stack_new <- aggregate(stack_new, fact = 100) #set to 25 if want a less coarse result (i.e., 2019 maps)
+  beginCluster() #use parallel core processing to speed up prediction
+  stack_predict_zero <- stack(c(stack_predict_zero, clusterR(stack_new, raster::predict, args = list(model = presence_model))))
+  stack_predict_CPUE <- stack(c(stack_predict_CPUE, clusterR(stack_new, raster::predict, args = list(model = CPUE_model))))
+  endCluster()
+}
+#transform into probabilities
+stack_predict_zero <- exp(stack_predict_zero)/(1+exp(stack_predict_zero))
+#combine to get final abundance predictions
+stack_predict_combined <- stack_predict_zero*stack_predict_CPUE
+
+#generate the plot of the probability predictions (2000-2019)
+stack_df <- as.data.frame(stack_predict_zero, xy = TRUE) %>% melt(id.vars = c('x','y'))
+levels(stack_df$variable) <- seq(2000, 2019, by = 1)
+ggplot() + geom_raster(data = na.omit(stack_df), aes(x = x, y = y, fill = value)) +
+  facet_wrap(~ variable, ncol = 4) + scale_fill_gradientn(name = "", colours = viridis(100), limits = c(0, 1)) + coord_equal() +
+  ggtitle("Predicted Probability of C. frondosa Presence") + ylab("Northings") + xlab("Eastings") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  theme(text=element_text(size=16, family="serif")) + coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) 
+
+#generate the plot of the conditional CPUE predictions (2000-2019)
+stack_df <- as.data.frame(stack_predict_CPUE, xy = TRUE) %>% melt(id.vars = c('x','y'))
+levels(stack_df$variable) <- seq(2000, 2019, by = 1)
+ggplot() + geom_raster(data = na.omit(stack_df), aes(x = x, y = y, fill = value)) +
+  facet_wrap(~ variable, ncol = 4) + scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-2.5,12.5)) + coord_equal()+
+  ggtitle("Predicted Log(CPUE [kg/square kilometre])\n[Conditional on C. frondosa Presence]") + ylab("Northings") + xlab("Eastings") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  theme(text=element_text(size=16, family="serif")) + coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+
+#generate the plot the final CPUE predictions (2000-2019)
+stack_df <- as.data.frame(stack_predict_combined, xy = TRUE) %>% melt(id.vars = c('x','y'))
+levels(stack_df$variable) <- seq(2000, 2019, by = 1)
+ggplot() + geom_raster(data = na.omit(stack_df), aes(x = x, y = y, fill = value)) +
+  facet_wrap(~ variable, ncol = 4) + scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-0.25, 12.25)) + coord_equal() +
+  ggtitle("Predicted Log(CPUE [kg/square kilometre])") + ylab("Northings") + xlab("Eastings") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
+  theme(text=element_text(size=16, family="serif")) + coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+
+####################2019 PREDICTIONS#################
+
+#load shape file for reserves and get the units into km
+fishing_area_reserves <- shapefile("Data/All Fishing Areas with Reserves/Fishing_Areas_2018.shp")
+fishing_area_reserves <- spTransform(fishing_area_reserves, 
+                                     crs("+datum=WGS84 +proj=utm +zone=20T +units=km"))
+#subset it to our spatial domain
+fishing_area_reserves <- fishing_area_reserves[-which(fishing_area_reserves$Region == "SWNB"|fishing_area_reserves$Region=="4X"),]
+#split up fishing zones and reserves
+fishing_area <- fishing_area_reserves[which(fishing_area_reserves$Type=="Fishing Area"),]
+reserve <- fishing_area_reserves[which(fishing_area_reserves$Type=="Reserve"),]
+
+#load the WEBCA boundary and fix formatting
+WEBCA <- shapefile("Data/DFO_OECM_MPO_AMCEZ_SHP/DFO_OECM_MPO_AMCEZ.shp")
+WEBCA <- WEBCA[which(WEBCA$NAME_E == "Western/Emerald Banks Conservation Area (restricted fisheries zone)"),]
+WEBCA <- spTransform(WEBCA, crs("+datum=WGS84 +proj=utm +zone=20T +units=km"))
+
+#generate the plot of probability predictions
+stack_df <- as.data.frame(stack_predict_zero[[20]], xy = TRUE) %>% melt(id.vars = c('x','y'))
+ggplot() + geom_raster(interpolate = TRUE, data = na.omit(stack_df), aes(x = x, y = y, fill = value)) + 
+  scale_fill_gradientn(name = "", colours = viridis(100), limits = c(0,1)) + 
+  coord_equal() +
+  ggtitle("2019 - Probability of C. frondosa Presence") + ylab("Northings") + xlab("Eastings\n") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat))+
+  theme(text=element_text(size=20, family="serif"), legend.position = "bottom", 
+        legend.key.size = unit(1.25, 'cm'), legend.text = element_text(size=18), 
+        plot.margin=unit (c (1,2,2,1.5), 'cm')) + 
+  coord_cartesian(ylim = c(4600, 5250), xlim = c(125, 1000)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+
+#generate the plot of CPUE (conditional) predictions
+stack_df <- as.data.frame(stack_predict_CPUE[[20]], xy = TRUE) %>% melt(id.vars = c('x','y'))
+ggplot() + geom_raster(interpolate = TRUE, data = na.omit(stack_df), aes(x = x, y = y, fill = value)) + 
+  scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-2.5,12.5)) + 
+  coord_equal() +
+  ggtitle("2019 - Log(CPUE [kg/square kilometre])\n[Conditional on Presence]") + 
+  ylab("Northings") + xlab("Eastings\n") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat))+
+  theme(text=element_text(size=20, family="serif"), legend.position = "bottom", 
+        legend.key.size = unit(1.25, 'cm'), legend.text = element_text(size=18), 
+        plot.margin=unit (c (1,2,2,1.5), 'cm')) + 
+  coord_cartesian(ylim = c(4600, 5250), xlim = c(125, 1000)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+
+#plot the final combined predictions
+stack_df <- as.data.frame(stack_predict_combined[[20]], xy = TRUE) %>% melt(id.vars = c('x','y'))
+ggplot() + geom_raster(interpolate = TRUE, data = na.omit(stack_df), aes(x = x, y = y, fill = value)) + 
+  scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-0.05,12.25)) + 
+  coord_equal() +
+  ggtitle("2019 - Log(CPUE [kg/square kilometre])") + ylab("Northings") + xlab("Eastings") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat))+
+  theme(text=element_text(size=20, family="serif"), legend.position = "bottom", 
+        legend.key.size = unit(1.25, 'cm'), legend.text = element_text(size=18), 
+        plot.margin=unit (c (1,2,2,1.5), 'cm')) + 
+  coord_cartesian(ylim = c(4600, 5250), xlim = c(125, 1000)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
+
+#generate the zoomed in plot of probability predictions... add the management boundaries
+stack_df <- as.data.frame(stack_predict_zero[[20]], xy = TRUE) %>% melt(id.vars = c('x','y'))
+ggplot() + geom_raster(interpolate = TRUE, data = na.omit(stack_df), aes(x = x, y = y, fill = value)) + 
+  scale_fill_gradientn(name = "", colours = viridis(100), limits = c(0,1)) + 
+  coord_equal() +
+  ggtitle("2019 - Probability of C. frondosa Presence") + ylab("Northings") + xlab("Eastings\n") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat))+
+  theme(text=element_text(size=20, family="serif"), legend.position = "bottom", 
+        legend.key.size = unit(1.25, 'cm'), legend.text = element_text(size=18), 
+        plot.margin=unit (c (1,2,2,1.5), 'cm')) + 
+  coord_cartesian(ylim = c(4800, 5000), xlim = c(600, 950)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
+  geom_polygon(data = rbind(fortify(reserve), fortify(WEBCA)), aes(group = group, x = long, 
+                            y = lat), col = "white", fill = NA, size = 1.45, linetype = 3) +
+  geom_polygon(data = fortify(fishing_area), aes(group = group, x = long, 
+                                                 y = lat), col = "cyan", fill = NA, size = 1.2)
+
+#generate the zoomed in plot of CPUE (conditional) predictions... add the management regions
+stack_df <- as.data.frame(stack_predict_CPUE[[20]], xy = TRUE) %>% melt(id.vars = c('x','y'))
+ggplot() + geom_raster(interpolate = TRUE, data = na.omit(stack_df), aes(x = x, y = y, fill = value)) + 
+  scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-2.5,12.5)) + 
+  coord_equal() +
+  ggtitle("2019 - Log(CPUE [kg/square kilometre])\n[Conditional on Presence]") + 
+  ylab("Northings") + xlab("Eastings\n") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat))+
+  theme(text=element_text(size=20, family="serif"), legend.position = "bottom", 
+        legend.key.size = unit(1.25, 'cm'), legend.text = element_text(size=18), 
+        plot.margin=unit (c (1,2,2,1.5), 'cm')) + 
+  coord_cartesian(ylim = c(4800, 5000), xlim = c(600, 950)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
+  geom_polygon(data = rbind(fortify(reserve), fortify(WEBCA)), aes(group = group, x = long, 
+                            y = lat), col = "white", fill = NA, size = 1.45, linetype = 3) +
+  geom_polygon(data = fortify(fishing_area), aes(group = group, x = long, 
+                                                 y = lat), col = "cyan", fill = NA, size = 1.2)
+
+#final combined predictions... zoomed in with management regions
+stack_df <- as.data.frame(stack_predict_combined[[20]], xy = TRUE) %>% melt(id.vars = c('x','y'))
+ggplot() + geom_raster(interpolate = TRUE, data = na.omit(stack_df), aes(x = x, y = y, fill = value)) + 
+  scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-0.05,12.25)) + 
+  coord_equal() +
+  ggtitle("2019 - Log(CPUE [kg/square kilometre])") + ylab("Northings") + xlab("Eastings") +
+  geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat))+
+  theme(text=element_text(size=20, family="serif"), legend.position = "bottom", 
+        legend.key.size = unit(1.25, 'cm'), legend.text = element_text(size=18), 
+        plot.margin=unit (c(1,2,2,1.5), 'cm')) + 
+  coord_cartesian(ylim = c(4800, 5000), xlim = c(600, 950)) + 
+  geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
+  geom_polygon(data = rbind(fortify(reserve), fortify(WEBCA)), aes(group = group, x = long, 
+                                          y = lat), col = "white", fill = NA, size = 1.45, linetype = 3) +
+  geom_polygon(data = fortify(fishing_area), aes(group = group, x = long, 
+                                                 y = lat), col = "cyan", fill = NA, size = 1.2)

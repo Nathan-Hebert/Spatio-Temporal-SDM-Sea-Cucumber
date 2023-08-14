@@ -1,0 +1,4 @@
+"0","areasim<-simulate_area(n_obs=1000,n_knots=3,seed=20)"
+"0","#areasim<-simulate_area(n_obs=1000,n_knots=20,seed=20,x_coord=c(175,175,225,250,225),"
+"0","#y_coord=c(175,225,225,225,175),max.edge=c(8,30),cutoff=2)"
+"0","#areasim<-simulate_area(n_obs=1000,n_knots=20,seed=20,area=your_sf_area,max.edge=c(10,25),cutoff=1)"

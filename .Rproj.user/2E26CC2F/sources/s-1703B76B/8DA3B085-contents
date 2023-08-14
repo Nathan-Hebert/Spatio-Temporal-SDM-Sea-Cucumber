@@ -1,0 +1,49 @@
+#do CV
+test_metrics_presence <- list()
+test_metrics_CPUE <- list()
+for (i in 1:folds)
+{
+  print(i)
+  
+  #grab all tows in the fold
+  fold_tows <- which(survey_data_combined$fold == i)
+  #scale covariates using training mean, sd
+  survey_data_combined[paste(covariates,"Scaled", sep="")] <- mapply(x = survey_data_combined[covariates], y = survey_data_combined[-fold_tows, covariates], 
+                                                                     function(x, y) scale(x, center = mean(y), scale = sd(y)))
+  
+  #fit presence sub-model
+  presence_model <- gam(presence ~ te(UTMX, UTMY, year, k = c(400, 5), 
+                                      bs = c("ds","tp"), m = list(c(1,0.5),NA), d = c(2,1)) + 
+                          s(DEM_logScaled, k = 3)+s(BtmTempBNAMScaled, k = 3) + s(RangeTempScaled, k = 3) + s(BtmSalinityBNAMScaled, k = 3) + 
+                          s(BtmStressBNAMLogScaled, k = 3) + s(RangeStressLogScaled, k = 3) + s(sqrt_DEM_SlopeScaled, k = 3) + 
+                          s(DEM_EasternessScaled, k = 3) + s(DEM_NorthernessScaled, k = 3) + s(DEM_RDMVScaled, k = 3) + as.numeric(snowcrab), 
+                        family = "binomial", 
+                        data = survey_data_combined[-fold_tows,], 
+                        method = "REML")
+  #predict for testing data, get metrics
+  predict_testing <- predict(presence_model, newdata = survey_data_combined[fold_tows,], type = "response")
+  test_metrics_presence[[i]] <- presence_metrics(as.numeric(survey_data_combined$presence[fold_tows]), 
+                                                 predict_testing)
+  
+  #grab positive catch tows in the fold
+  fold_tows <- which(survey_data_combined_CPUE$fold == i)                                                                        function(x, y) scale(x, center = mean(y), scale = sd(y)))
+#fit CPUE sub-model
+CPUE_model <- gam(log(std.WGT) ~ te(UTMX, UTMY, year, k = c(300, 5), 
+                                    bs = c("ds","tp"), m = list(c(1,0.5),NA), d = c(2,1)) + 
+                    s(DEM_logScaled, k = 3)+s(BtmTempBNAMScaled, k = 3) + s(RangeTempScaled, k = 3) + s(BtmSalinityBNAMScaled, k = 3) + 
+                    s(BtmStressBNAMLogScaled, k = 3) + s(RangeStressLogScaled, k = 3) + s(sqrt_DEM_SlopeScaled, k = 3) + 
+                    s(DEM_EasternessScaled, k = 3) + s(DEM_NorthernessScaled, k = 3) + s(DEM_RDMVScaled, k = 3) + as.numeric(snowcrab), 
+                  family = "gaussian", 
+                  data = survey_data_combined_CPUE[-fold_tows,], 
+                  method = "REML")
+#predict for testing data, get metrics
+test_residual <- survey_data_combined_CPUE[fold_tows, "std.WGT_log"] - predict(CPUE_model, newdata = survey_data_combined_CPUE[fold_tows,])
+test_metrics_CPUE[[i]] <- CPUE_metrics(test_residual)
+
+file.path(getwd(), "WorkspaceFiles", "GAMCrossValidation.RData")
+}
+#get mean of scores
+mean(unlist(test_metrics_presence)[names(unlist(test_metrics_presence))=="auc"])
+mean(unlist(test_metrics_presence)[names(unlist(test_metrics_presence))=="brier"])
+mean(unlist(test_metrics_CPUE)[names(unlist(test_metrics_CPUE))=="MAE"])
+mean(unlist(test_metrics_CPUE)[names(unlist(test_metrics_CPUE))=="RMSE"])

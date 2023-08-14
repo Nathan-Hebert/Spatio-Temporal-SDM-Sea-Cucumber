@@ -1,0 +1,43 @@
+#load necessary libraries
+library(starve)
+library(sdmTMB)
+
+########################PLOTS COMPARING ESTIMATES FROM sdmTMB and starve############################
+
+#CPUE SUB-MODELS - DEPTH
+load(paste(getwd(),"/Workspace Files/sdmTMB.RData", sep = ""))
+source("R Files/Helper Functions.R")
+#plot effect estimate and uncertainty from sdmTMB model
+par(mar = c(5,5,4,2), mfrow = c(1,1))
+effects_plot(CPUE_model, 2, 3, original_vector = survey_data_combined_CPUE$DEM_logScaled,
+             xlab = "Log(Depth)", ylab = "Partial Effect", cex.main = 2,
+             cex.axis = 2.45, cex.lab = 3, ylim = c(-5,2), line_color = "blue", ci.color = "light blue", lwd = 3)
+#add starve model line and confidence bounds
+load(paste(getwd(),"/Workspace Files/starve.RData", sep = ""))
+x <- seq(min(survey_data_combined_CPUE$DEM_logScaled), max(survey_data_combined_CPUE$DEM_logScaled), length.out = 1000)
+y <- CPUE_model@TMB_out@sdr$par.fixed[6]*x+CPUE_model@TMB_out@sdr$par.fixed[7]*x^2
+se <- sqrt(x^2*CPUE_model@tracing@parameter_covariance[6,6]+x^4*CPUE_model@tracing@parameter_covariance[7,7]+2*x^3*presence_model@tracing@parameter_covariance[6,7]) 
+polygon(c(x, rev(x)), c(y-1.96*se, rev(y+1.96*se)),
+        col = adjustcolor("orange", alpha.f=0.3), lty = 0)
+lines(x,y, lwd = 3, col = "darkorange2")
+legend("topright",legend=c(expression(paste(italic('sdmTMB')," Model")), 
+                        expression(paste(italic('starve')," Model"))), fill = c("blue","darkorange2"), cex = 3)
+
+#PRESENCE SUB-MODELS - BTM TEMP RANGE
+load(paste(getwd(),"/Workspace Files/sdmTMB.RData", sep = ""))
+source("R Files/Helper Functions.R")
+#plot effect estimate and uncertainty from sdmTMB model
+par(mar = c(5,5,4,2), mfrow = c(1,1))
+effects_plot(presence_model, 6,7, original_vector = survey_data_combined$RangeTempScaled,
+             xlab = "Bottom Temperature Range", ylab = "Partial Effect", cex.main = 2, 
+             cex.axis = 2.45, cex.lab = 3, ylim = c(-4,2.5), line_color = "blue", ci.color = "light blue", lwd = 3)
+#add starve model line and confidence bounds
+load(paste(getwd(),"/Workspace Files/starve.RData", sep = ""))
+x <- seq(min(survey_data_combined$RangeTempScaled), max(survey_data_combined$RangeTempScaled), length.out = 1000)
+y <- presence_model@TMB_out@sdr$par.fixed[9]*x+presence_model@TMB_out@sdr$par.fixed[10]*x^2
+se <- sqrt(x^2*presence_model@tracing@parameter_covariance[9,9]+x^4*presence_model@tracing@parameter_covariance[10,10]+2*x^3*presence_model@tracing@parameter_covariance[9,10]) 
+polygon(c(x, rev(x)), c(y-1.96*se, rev(y+1.96*se)),
+        col = adjustcolor("orange", alpha.f=0.3), lty = 0)
+lines(x,y, lwd = 3, col = "darkorange2")
+legend("topright",legend=c(expression(paste(italic('sdmTMB')," Model")), 
+                           expression(paste(italic('starve')," Model"))), fill = c("blue","darkorange2"), cex = 3)

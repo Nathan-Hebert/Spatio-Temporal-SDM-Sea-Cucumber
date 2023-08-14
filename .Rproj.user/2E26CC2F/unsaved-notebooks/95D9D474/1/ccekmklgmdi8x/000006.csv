@@ -1,0 +1,2 @@
+"0","library(inlabru)"
+"0","ggplot()+gg(knots_mesh$mesh)+geom_point(data=as.data.frame(knots_mesh$knots$centers),aes(x=X,y=Y))"
