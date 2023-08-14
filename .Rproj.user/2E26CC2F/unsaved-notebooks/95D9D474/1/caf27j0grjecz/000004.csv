@@ -1,1 +1,0 @@
-"0","set_data<-data_setup(data=form_data,growths=spa3_growths,catch=as.data.frame(sim_catches),model=""SEBDAM"",mesh=knots_mesh$mesh,obs_mort=T,prior=T,prior_pars=c(10,12),mult_qI=T,spat_approach=""spde_aniso"",knot_obj=knots_mesh$knots,knot_area=pred_grid$area,separate_R_aniso = FALSE,all_se=TRUE)"

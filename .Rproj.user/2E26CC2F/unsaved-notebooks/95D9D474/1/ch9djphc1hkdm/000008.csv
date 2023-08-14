@@ -1,3 +1,0 @@
-"0","load(""./spa3_model_area.RData"")"
-"0","library(ggplot2)"
-"0","ggplot()+geom_sf(data=plan_bound,col=""red"",fill=NA)+geom_sf(data=ns_map_84)+coord_sf(xlim=c(-67,-65.7),ylim=c(43.5,44.6))+theme_bw()"

@@ -1,6 +1,0 @@
-"0","#If defaults are good and using a single qI"
-"0","# simpar<-simulate_SEBDAM_params(simobj)"
-"0","#If using multiple qIs"
-"0","#simpar<-simulate_SEBDAM_params(simobj,qI=rbeta(20,10,12))"
-"0","#Other examples:"
-"0","simpar<-simulate_SEBDAM_params(simobj,sigma_epsilon=0.5,sigma_upsilon=0.5,sigma_B=0.2)"
