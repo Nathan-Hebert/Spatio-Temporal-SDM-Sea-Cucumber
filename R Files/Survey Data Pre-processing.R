@@ -6,7 +6,7 @@ source("R Files/Helper Functions.R")
 ###LOAD IN BNAM DATA###
 
 #grab list of desired BNAM files
-full_file_list <- list.files("Data/BNAM/BNAM_1990-2019_monthly", full.names = TRUE, 
+full_file_list <- list.files("Data/BNAM/BNAM_2000-2019_monthly", full.names = TRUE, 
                              recursive = TRUE)
 BtmTempFiles <- full_file_list[grepl("BtmTemp",full_file_list)==TRUE&
                                  grepl(".asc",full_file_list)==TRUE]
@@ -14,10 +14,6 @@ BtmSalinityFiles <- full_file_list[grepl("BtmSalinity",full_file_list)==TRUE&
                                      grepl(".asc",full_file_list)==TRUE]
 BtmStressFiles <- full_file_list[grepl("BtmStress",full_file_list)==TRUE&
                                    grepl(".asc",full_file_list)==TRUE]
-BtmVCurrentFiles <- full_file_list[grepl("BtmVCurrent",full_file_list)==TRUE&
-                                     grepl(".asc",full_file_list)==TRUE]
-BtmUCurrentFiles <- full_file_list[grepl("BtmUCurrent",full_file_list)==TRUE&
-                                     grepl(".asc",full_file_list)==TRUE]
 
 #load in spatial domain shape file
 shp <- shapefile("Data/SpatialDomain/MaritimesRegionEcosystemAssessmentStrata_SSsubset_ForSeaCuke.shp")
@@ -25,8 +21,6 @@ shp <- shapefile("Data/SpatialDomain/MaritimesRegionEcosystemAssessmentStrata_SS
 BtmTempStack <- crop(stack(BtmTempFiles[121:360]), shp)
 BtmSalinityStack <- crop(stack(BtmSalinityFiles[121:360]), shp)
 BtmStressStack <- crop(stack(BtmStressFiles[121:360]), shp)
-BtmVCurrentStack <- crop(stack(BtmVCurrentFiles[121:360]), shp)
-BtmUCurrentStack <- crop(stack(BtmUCurrentFiles[121:360]), shp)
 
 #calculate the mean, min, max, and range for bottom temperature
 AverageTemp <- calc(BtmTempStack, fun = mean)
@@ -136,10 +130,6 @@ survey_data_combined$BtmSalinityBNAM <- match_BNAM(survey_data_combined, BtmSali
                                                    "mid.lon", "mid.lat")
 survey_data_combined$BtmStressBNAM <- match_BNAM(survey_data_combined, BtmStressStack, 
                                                  "mid.lon", "mid.lat")
-survey_data_combined$BtmVCurrentBNAM <- match_BNAM(survey_data_combined, BtmVCurrentStack, 
-                                                   "mid.lon", "mid.lat")
-survey_data_combined$BtmUCurrentBNAM <- match_BNAM(survey_data_combined, BtmUCurrentStack, 
-                                                   "mid.lon", "mid.lat")
 
 #add other derived temp layers
 survey_data_combined$AverageTemp <- extract(AverageTemp, cbind(survey_data_combined$mid.lon, 

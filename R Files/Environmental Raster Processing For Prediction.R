@@ -9,7 +9,7 @@ memory.limit(size = 400000)
 shp <- shapefile("Data/SpatialDomain/MaritimesRegionEcosystemAssessmentStrata_SSsubset_ForSeaCuke.shp")
 
 #grab list of desired BNAM files
-full_file_list <- list.files("Data/BNAM/BNAM_1990-2019_monthly", full.names = TRUE, 
+full_file_list <- list.files("Data/BNAM/BNAM_2000-2019_monthly", full.names = TRUE, 
                              recursive = TRUE)
 BtmTempFiles <- full_file_list[grepl("BtmTemp",full_file_list)==TRUE&
                                  grepl(".asc",full_file_list)==TRUE]
