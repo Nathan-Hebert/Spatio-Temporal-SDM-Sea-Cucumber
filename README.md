@@ -12,4 +12,4 @@ Recommended order to run the `.R` files:
 - `sdmTMB Model Fitting + Output (Includes Figure 6).R`
 - `Figures 1 and 7.R`
 
-The three model fitting scripts listed above each depend on the processed survey data from `Survey Data Preprocessing.R` and the processed environmental raster data from `Environmental Raster Processing for Prediction.R`. `Figures 1 and 7.R` depend on the three fitted models from the three model fitting scripts.
+The three model fitting scripts listed above each depend on the processed survey data from `Survey Data Preprocessing.R` and the processed environmental raster data from `Environmental Raster Processing for Prediction.R`. The Figure 7 portion of `Figures 1 and 7.R` depends on the three fitted models from the three model fitting scripts.
