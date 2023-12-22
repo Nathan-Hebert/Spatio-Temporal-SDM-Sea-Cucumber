@@ -2,7 +2,7 @@
 library(starve); library(sdmTMB); library(mgcv)
 library(raster); library(reshape); library(ggplot2)
 library(dplyr); library(scales); library(viridis)
-library(ggridges); library(ggthemes); library(rgdal)
+library(ggthemes); library(rgdal)
 source("R Files/Helper Functions.R")
 
 #load in pre-processed survey data
