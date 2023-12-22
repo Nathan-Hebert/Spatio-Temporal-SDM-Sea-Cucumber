@@ -121,50 +121,80 @@ match_BNAM <- function(surveydata, BNAM_raster_stack, longitude, latitude)
   return(BNAM_values)
 }
 
-#function used by Figures 5 and 6... makes a partial effect plot for a GLMM covariate 
-#(with 95% confidence bounds derived using Breheny and Burchett's contrast approach (2017))
-#... let a and b be the index for the covariate's terms, and let original_vector be the 
-#covariate's original training vector
-effects_plot <- function(model, a, b = NULL, original_vector,..., line_color = "black", 
-                         ci.color = "light blue", starve = F)
+#used by Figures 2 and 3
+#plots partial effects for all three models at once (i.e., overlapping)...
+#let a and be the index for the variable's terms - in the starve and sdmTMB case, 
+#this must match with the covariate's row numbers in the model variance-covariance matrix...
+#let original_vector be the variable's original training vector
+#let sig = a vector containing the names of the models (i.e., "starve", "sdmTMB", and/or "mgcv") 
+#for which the term is significant (to add a star)
+effects_plot_combined <- function(mgcv_model, starve_model, sdmTMB_model, mgcv_a, starve_a, starve_b = NULL, 
+                                  sdmTMB_a, sdmTMB_b = NULL, original_vector, ylab = "Partial Effect", cex.main = 2,
+                                  cex.axis = 1.6, cex.lab = 1.6, lwd = 3, ... ,
+                                  line_colors = c("blue", "black","red"), sigstar_colors = line_colors,
+                                  ci.colors = c("light blue", 
+                                                adjustcolor("black", alpha.f=0.17), 
+                                                adjustcolor("red", alpha.f=0.17)),
+                                  sig = c("starve","sdmTMB","mgcv"))
 {
-  #values to predict across
+  #mgcv model plot
+  plot(mgcv_model, select = mgcv_a, shade = TRUE,  se = 1.96, lwd = lwd, rug = T, col = line_colors[1], 
+       shade.col = ci.colors[1], ..., ylab = ylab, cex.main = cex.main, cex.axis = cex.axis, cex.lab = cex.lab)
+  
+  # Add rug plot to the x-axis
+  rug(original_vector, side = 1, lwd = lwd)
+  
+  #values to predict across for other two models
   x <- seq(min(original_vector), max(original_vector), length.out = 1000)
-  #if not a quadratic
-  if(is.null(b)==TRUE)
+  #if quadratic isn't allowed
+  if(is.null(starve_b)&&is.null(sdmTMB_b))
   {
-    if(starve == T)
-    {
-      y <- model@TMB_out@sdr$par.fixed[a]*x
-      se <- x*sqrt(model@tracing@parameter_covariance[a,a])       
-    }
-    else
-    {
-      y <- model$sd_report$par.fixed[a]*x
-      se <- x*sqrt(vcov(model)[a,a])  
-    }
+    #calculate starve model values using Breheny and Burchett's contrast approach (2017)
+    y_starve <- starve_model@TMB_out@sdr$par.fixed[starve_a]*x
+    se_starve <- x*sqrt(starve_model@tracing@parameter_covariance[starve_a,starve_a])       
+    
+    #calculate sdmTMB model values using Breheny and Burchett's contrast approach (2017)
+    y_sdmTMB <- sdmTMB_model$sd_report$par.fixed[sdmTMB_a]*x
+    se_sdmTMB <- x*sqrt(vcov(sdmTMB_model)[sdmTMB_a,sdmTMB_a])  
   }
-  #if quadratic
+  #if quadratic is allowed
   else
   {
-    if(starve == T)
-    {
-      y <- model@TMB_out@sdr$par.fixed[a]*x+model@TMB_out@sdr$par.fixed[b]*x^2
-      se <- sqrt(x^2*model@tracing@parameter_covariance[a,a]+
-                   x^4*model@tracing@parameter_covariance[b,b]+2*x^3*model@tracing@parameter_covariance[a,b]) 
-    }
-    else
-    {
-      y <- model$sd_report$par.fixed[a]*x+model$sd_report$par.fixed[b]*x^2
-      se <- sqrt(x^2*vcov(model)[a,a]+x^4*vcov(model)[b,b]+2*x^3*vcov(model)[a,b]) 
-    }
+    #calculate starve model values using Breheny and Burchett's contrast approach (2017)
+    y_starve <- starve_model@TMB_out@sdr$par.fixed[starve_a]*x+starve_model@TMB_out@sdr$par.fixed[starve_b]*x^2
+    se_starve <- sqrt(x^2*starve_model@tracing@parameter_covariance[starve_a,starve_a]+x^4*
+                        starve_model@tracing@parameter_covariance[starve_b, starve_b]+2*x^3*
+                        starve_model@tracing@parameter_covariance[starve_a,starve_b]) 
+    
+    #calculate sdmTMB model values using Breheny and Burchett's contrast approach (2017)
+    y_sdmTMB <- sdmTMB_model$sd_report$par.fixed[sdmTMB_a]*x+sdmTMB_model$sd_report$par.fixed[sdmTMB_b]*x^2
+    se_sdmTMB <- sqrt(x^2*vcov(sdmTMB_model)[sdmTMB_a,sdmTMB_a]+x^4*vcov(sdmTMB_model)[sdmTMB_b,sdmTMB_b]+2*x^3*
+                        vcov(sdmTMB_model)[sdmTMB_a,sdmTMB_b]) 
   }
-  #make plot, add shading for CIs, rug, line
-  plot(x, y,..., cex = 0.05, col = line_color)
-  polygon(c(x, rev(x)), c(y-1.96*se, rev(y+1.96*se)),
-          col = ci.color, lty = 0)
-  lines(x,y, col = line_color, ...)
-  rug(original_vector, ...)
+  
+  #add starve model estimated effect and uncertainty to plot
+  polygon(c(x, rev(x)), c(y_starve-1.96*se_starve, rev(y_starve+1.96*se_starve)),
+          col = ci.colors[2], lty = 0)
+  lines(x,y_starve, lwd = lwd, col = line_colors[2])
+  
+  #add sdmTMB model estimated effect and uncertainty to plot
+  polygon(c(x, rev(x)), c(y_sdmTMB-1.96*se_sdmTMB, rev(y_sdmTMB+1.96*se_sdmTMB)),
+          col = ci.colors[3], lty = 0)
+  lines(x,y_sdmTMB, lwd = lwd, col = line_colors[3])
+  
+  #add significance stars
+  if("mgcv"%in%sig)
+  {
+    mtext("*", col = sigstar_colors[1], adj = 0.15, cex = cex.main)
+  }
+  if("starve"%in%sig)
+  {
+    mtext("*", col = sigstar_colors[2], adj = 0.5, cex = cex.main)
+  }
+  if("sdmTMB"%in%sig)
+  {
+    mtext("*", col = sigstar_colors[3], adj = 0.85, cex = cex.main)
+  }
 }
 
 #function to turn GMRF or starve predictions/SEs into a raster

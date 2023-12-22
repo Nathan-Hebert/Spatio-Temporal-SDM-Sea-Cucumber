@@ -1,7 +1,5 @@
 #import necessary libraries
-library(raster)
-library(sp)
-source("R Files/Helper Functions.R")
+library(raster); library(sp); source("R Files/Helper Functions.R")
 
 ###LOAD IN BNAM DATA###
 

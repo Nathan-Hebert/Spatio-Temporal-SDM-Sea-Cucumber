@@ -1,6 +1,5 @@
 #load necessary libraries
-library(corrplot)
-library(car)
+library(corrplot); library(car)
 
 #load in pre-processed survey data
 survey_data_combined <- read.csv(paste(getwd(),"/Data/survey_data_combined.csv", sep = ""))
@@ -41,7 +40,7 @@ rownames(cor) <- c("Btm. Temperature", "Btm. Salinity","Log(Btm. Stress)",
 colnames(cor) <- rownames(cor)
 corrplot(cor, method = "number", type = "upper", tl.col = "black")
 
-#check VIFs for final presence models
+#check VIFs for final encounter models
 b <- glm(presence~BtmTempBNAM+
            BtmSalinityBNAM+
            log(BtmStressBNAM)+

@@ -1,6 +1,5 @@
 #load necessary libraries
-library(raster)
-source("R Files/Helper Functions.R")
+library(raster); source("R Files/Helper Functions.R")
 
 #increase memory limit
 memory.limit(size = 400000)

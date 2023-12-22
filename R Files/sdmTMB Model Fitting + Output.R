@@ -1,15 +1,14 @@
 #load necessary libraries
-library(sdmTMB)
-library(INLA) #Use SPDE functionality
-library(raster)
-library(knitr)
-library(sp)
-library(ggplot2)
-library(inlabru)
-library(viridis)
-library(ggnewscale)
-library(DHARMa)
-source("R Files/Helper Functions.R")
+library(sdmTMB); library(INLA); library(raster)
+library(knitr); library(sp); library(ggplot2)
+library(inlabru); library(viridis); library(ggnewscale)
+library(DHARMa); source("R Files/Helper Functions.R")
+
+#increase memory limit
+memory.limit(size = 400000)
+
+#set number of decimals to round tables to
+round_val <- 3
 
 #load in pre-processed survey data
 survey_data_combined <- read.csv(paste(getwd(),"/Data/survey_data_combined.csv", sep = ""))
@@ -57,12 +56,12 @@ ggplot() +
   geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
   gg(mesh, int.linewidth = 0.8, edge.color = "grey44")
 
-#########################################PRESENCE SUB-MODEL#########################################
+#########################################ENCOUNTER SUB-MODEL#########################################
 
-#fit the presence sub-model in sdmTMB using the mesh
+#fit the encounter sub-model in sdmTMB using the mesh... use random walk
 mesh_model <- make_mesh(survey_data_combined, xy_cols = c("UTMX", "UTMY"), mesh = mesh)
 start_time <- Sys.time()
-presence_model <- sdmTMB(presence ~ DEM_logScaled+I(DEM_logScaled^2)+BtmTempBNAMScaled+
+encounter_sdmTMB <- sdmTMB(presence ~ DEM_logScaled+I(DEM_logScaled^2)+BtmTempBNAMScaled+
                            I(BtmTempBNAMScaled^2)+RangeTempScaled+I(RangeTempScaled^2)+
                            BtmSalinityBNAMScaled+I(BtmSalinityBNAMScaled^2)+BtmStressBNAMLogScaled+
                            RangeStressLogScaled+I(RangeStressLogScaled^2)+sqrt_DEM_SlopeScaled+
@@ -72,15 +71,15 @@ presence_model <- sdmTMB(presence ~ DEM_logScaled+I(DEM_logScaled^2)+BtmTempBNAM
   data = survey_data_combined,
   mesh = mesh_model,
   family = binomial(),
-  spatiotemporal = "ar1", spatial = "off", time = "year", 
+  spatiotemporal = "rw", spatial = "on", share_range = TRUE, time = "year", 
   control = sdmTMBcontrol(newton_loops = 1, nlminb_loops = 2))
 end_time <- Sys.time()
 fit_time1 <- end_time - start_time #get time to fit
 #sanity check
-sanity(presence_model)
+sanity(encounter_sdmTMB)
 
 #create table to describe fixed effects, etc. - Table S5
-fixed_effects_table <- round(tidy(presence_model)[2:3],3)
+fixed_effects_table <- round(tidy(encounter_sdmTMB)[2:3], round_val)
 rownames(fixed_effects_table) <- c("Intercept","Log(Depth)","Log(Depth) Squared",
                                    "Bottom Temperature", "Bottom Temperature Squared",
                                    "Btm. Temperature Range","Btm. Temperature Range Squared",
@@ -91,60 +90,27 @@ rownames(fixed_effects_table) <- c("Intercept","Log(Depth)","Log(Depth) Squared"
                                    "Northerness Squared","Easterness","RDMV","RDMV Squared",
                                    "Snow Crab Survey")
 colnames(fixed_effects_table) <- c("Estimate", "Std. Error")
-spatiotemporal_parameters_table <- round(tidy(presence_model, effects = "ran_pars", 
-                                              conf.int = FALSE)[2],3)
-se <- as.list(presence_model$sd_report, "Std. Error", report = TRUE) #grab SEs in natural space
+spatiotemporal_parameters_table <- round(tidy(encounter_sdmTMB, effects = "ran_pars", 
+                                              conf.int = FALSE)[2], round_val)
+se <- as.list(encounter_sdmTMB$sd_report, "Std. Error", report = TRUE) #grab SEs in natural space
 spatiotemporal_parameters_table <- cbind(spatiotemporal_parameters_table, 
-                                         round(c(se$range[1], se$sigma_E[1], se$rho),3))
+                                         round(c(se$range[1], se$sigma_O, se$sigma_E[1]), round_val))
 colnames(spatiotemporal_parameters_table) <- c("Estimate", "Std. Error")
-rownames(spatiotemporal_parameters_table) <- c("Range", "Marginal Spatial SD","AR(1) Correlation")
+rownames(spatiotemporal_parameters_table) <- c("Range", "Marginal Spatial SD","Marginal Spatio-Temporal SD")
 kable(list(fixed_effects_table, spatiotemporal_parameters_table), format = "latex")
 
-#plot the sub-model terms (i.e. for Figure 6)
-par(mfrow = c(3,4), mar = c(5,5,4,2))
-effects_plot(presence_model, 2, 3, original_vector = survey_data_combined$DEM_logScaled,
-             xlab = "Log(Depth)", ylab = "Partial Effect", main = "***", cex.main = 2.5, 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-7,1.3))
-effects_plot(presence_model, 4, 5, original_vector = survey_data_combined$BtmTempBNAMScaled,
-             xlab = "Bottom Temperature", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 6,7, original_vector = survey_data_combined$RangeTempScaled,
-             xlab = "Btm. Temperature Range", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 8,9, original_vector = survey_data_combined$BtmSalinityBNAMScaled,
-             xlab = "Bottom Salinity", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 10, original_vector = survey_data_combined$BtmStressBNAMLogScaled,
-             xlab = "Log(Bottom Stress)", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 11,12, original_vector = survey_data_combined$RangeStressLogScaled,
-             xlab = "Log(Btm. Stress Range)", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 13,14, original_vector = survey_data_combined$sqrt_DEM_SlopeScaled,
-             xlab = "Square Root of Slope", ylab = "Partial Effect", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 15,16, original_vector = survey_data_combined$DEM_NorthernessScaled,
-             xlab = "Northerness", ylab = "Partial Effect", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 17, original_vector = survey_data_combined$DEM_EasternessScaled,
-             xlab = "Easterness", ylab = "Partial Effect", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-effects_plot(presence_model, 18,19, original_vector = survey_data_combined$DEM_RDMVScaled,
-             xlab = "RDMV", ylab = "Partial Effect", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-3,1.3))
-
 #get DHARMa residuals, using 250 simulations
-sim <- simulate(presence_model, nsim = 250, seed = 2)
-residuals_presence <- DHARMa::createDHARMa(
+sim <- simulate(encounter_sdmTMB, nsim = 250, seed = 2)
+residuals_encounter <- DHARMa::createDHARMa(
   simulatedResponse = sim,
   observedResponse = as.numeric(survey_data_combined$presence),
   integer = T,
-  fittedPredictedResponse = predict(presence_model, type = "response")$est
+  fittedPredictedResponse = predict(encounter_sdmTMB, type = "response")$est
 )
-plot(residuals_presence)
+plot(residuals_encounter)
 
 #spatio-temporally plot residuals
-ggplot() + geom_point(size = 0.9, aes(x = UTMX, y = UTMY, col = residuals_presence$scaledResiduals),
+ggplot() + geom_point(size = 0.9, aes(x = UTMX, y = UTMY, col = residuals_encounter$scaledResiduals),
                            data = survey_data_combined) + 
   scale_colour_gradientn(colours = viridis(100)) +
   labs(col = "Quantile\nResidual\n") + theme(text=element_text(size=16)) + 
@@ -153,21 +119,21 @@ ggplot() + geom_point(size = 0.9, aes(x = UTMX, y = UTMY, col = residuals_presen
   coord_cartesian(ylim = c(4650, 5250), xlim = c(125, 1000)) + 
   geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat))
 #temporally plot residuals
-ggplot(aes(x = year, y = residuals_presence$scaledResiduals), data = survey_data_combined) + 
+ggplot(aes(x = year, y = residuals_encounter$scaledResiduals), data = survey_data_combined) + 
   geom_point(size = 0.15) + geom_smooth(method = "loess") + ylab("Quantile Residual") + xlab("Year") + 
   theme(text=element_text(size=16))
 
 #########################################CPUE SUB-MODEL###########################################
 
-#grab presence tows and set up the response
+#grab encounter tows and set up the response
 survey_data_combined_CPUE <- survey_data_combined[which(is.na(survey_data_combined$std.WGT)==FALSE&
                                                           survey_data_combined$std.WGT!=0),]
 survey_data_combined_CPUE$std.WGT_log <- log(survey_data_combined_CPUE$std.WGT)
 
-#fit the CPUE sub-model in sdmTMB using the mesh
+#fit the CPUE sub-model in sdmTMB using the mesh... use random walk
 mesh_model <- make_mesh(survey_data_combined_CPUE, xy_cols = c("UTMX", "UTMY"), mesh = mesh)
 start_time <- Sys.time()
-CPUE_model <- sdmTMB(std.WGT_log ~ DEM_logScaled+I(DEM_logScaled^2)+BtmTempBNAMScaled+
+CPUE_sdmTMB <- sdmTMB(std.WGT_log ~ DEM_logScaled+I(DEM_logScaled^2)+BtmTempBNAMScaled+
                        I(BtmTempBNAMScaled^2)+RangeTempScaled+
                        I(RangeTempScaled^2)+BtmSalinityBNAMScaled+I(BtmSalinityBNAMScaled^2)+
                        BtmStressBNAMLogScaled+RangeStressLogScaled+I(RangeStressLogScaled^2)+
@@ -177,15 +143,15 @@ CPUE_model <- sdmTMB(std.WGT_log ~ DEM_logScaled+I(DEM_logScaled^2)+BtmTempBNAMS
                      data = survey_data_combined_CPUE,
                      mesh = mesh_model,
                      family = gaussian(),
-                     spatiotemporal = "ar1", spatial = "off", time = "year", 
+                     spatiotemporal = "rw", spatial = "on", share_range = TRUE, time = "year", 
                      control = sdmTMBcontrol(newton_loops = 1))
 end_time <- Sys.time()
 fit_time3 <- end_time - start_time #get time to fit
 #sanity check
-sanity(CPUE_model)
+sanity(CPUE_sdmTMB)
 
 #create table to describe fixed effects, etc. - Table S6
-fixed_effects_table <- round(tidy(CPUE_model)[2:3],3)
+fixed_effects_table <- round(tidy(CPUE_sdmTMB)[2:3], round_val)
 rownames(fixed_effects_table) <- c("Intercept","Log(Depth)","Log(Depth) Squared",
                                    "Bottom Temperature", "Bottom Temperature Squared",
                                    "Btm. Temperature Range","Btm. Temperature Range Squared",
@@ -196,57 +162,24 @@ rownames(fixed_effects_table) <- c("Intercept","Log(Depth)","Log(Depth) Squared"
                                    "Northerness Squared","Easterness","RDMV","RDMV Squared",
                                    "Snow Crab Survey")
 colnames(fixed_effects_table) <- c("Estimate", "Std. Error")
-spatiotemporal_parameters_table <- round(tidy(CPUE_model, effects = "ran_pars", 
-                                              conf.int = FALSE)[-2,2],3)
-se <- as.list(CPUE_model$sd_report, "Std. Error", report = TRUE) #grab SEs in natural space
+spatiotemporal_parameters_table <- round(tidy(CPUE_sdmTMB, effects = "ran_pars", 
+                                              conf.int = FALSE)[-2,2], round_val)
+se <- as.list(CPUE_sdmTMB$sd_report, "Std. Error", report = TRUE) #grab SEs in natural space
 spatiotemporal_parameters_table <- cbind(spatiotemporal_parameters_table, 
-                                         round(c(se$range[1], se$sigma_E[1], se$rho),3))
+                                         round(c(se$range[1], se$sigma_O, se$sigma_E[1]), round_val))
 colnames(spatiotemporal_parameters_table) <- c("Estimate", "Std. Error")
-rownames(spatiotemporal_parameters_table) <- c("Range", "Marginal Spatial SD", "AR(1) Correlation")
+rownames(spatiotemporal_parameters_table) <- c("Range", "Marginal Spatial SD","Marginal Spatio-Temporal SD")
 kable(list(fixed_effects_table, spatiotemporal_parameters_table), format = "latex")
 
-#plot the sub-model terms (i.e. for Figure 6)
-par(mfrow = c(3,4), mar = c(5,5,4,2))
-effects_plot(CPUE_model, 2, 3, original_vector = survey_data_combined_CPUE$DEM_logScaled,
-             xlab = "Log(Depth)", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-4.5,1.2))
-effects_plot(CPUE_model, 4,5, original_vector = survey_data_combined_CPUE$BtmTempBNAMScaled,
-             xlab = "Bottom Temperature", ylab = "Partial Effect", cex.main = 2.5, main = "***",
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 6,7, original_vector = survey_data_combined_CPUE$RangeTempScaled,
-             xlab = "Btm. Temperature Range", ylab = "Partial Effect", main = "***", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2), cex.main = 2.5)
-effects_plot(CPUE_model, 8,9, original_vector = survey_data_combined_CPUE$BtmSalinityBNAMScaled,
-             xlab = "Bottom Salinity", ylab = "Partial Effect", main = "***", cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 10, original_vector = survey_data_combined_CPUE$BtmStressBNAMLogScaled,
-             xlab = "Log(Bottom Stress)", ylab = "Partial Effect", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 11,12, original_vector = survey_data_combined_CPUE$RangeStressLogScaled,
-             xlab = "Log(Btm. Stress Range)", ylab = "Partial Effect", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 13,14, original_vector = survey_data_combined_CPUE$sqrt_DEM_SlopeScaled,
-             xlab = "Square Root of Slope", ylab = "Partial Effect", main = "***",cex.main = 2.5,
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 15,16, original_vector = survey_data_combined_CPUE$DEM_NorthernessScaled,
-             xlab = "Northerness", ylab = "Partial Effect", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 17, original_vector = survey_data_combined_CPUE$DEM_EasternessScaled,
-             xlab = "Easterness", ylab = "Partial Effect", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-effects_plot(CPUE_model, 18,19, original_vector = survey_data_combined_CPUE$DEM_RDMVScaled,
-             xlab = "RDMV", ylab = "Partial Effect", 
-             cex.axis = 1.9, cex.lab = 1.9, ylim = c(-2,2))
-
 #get DHARMa residuals, using 250 simulations
-sim <- simulate(CPUE_model, nsim = 250, seed = 2)
+sim <- simulate(CPUE_sdmTMB, nsim = 250, seed = 2)
 residuals_CPUE <- DHARMa::createDHARMa(
   simulatedResponse = sim,
   observedResponse = survey_data_combined_CPUE$std.WGT_log,
   integer = F,
-  fittedPredictedResponse = predict(CPUE_model)$est
+  fittedPredictedResponse = predict(CPUE_sdmTMB)$est
 )
-plot(residuals_CPUE) #Figure S4
+plot(residuals_CPUE) #Figure S5
 
 #spatio-temporally plot residuals
 ggplot() + geom_point(size = 0.9, aes(x = UTMX, y = UTMY, col = residuals_CPUE$scaledResiduals),
@@ -264,9 +197,6 @@ ggplot(aes(x = year, y = residuals_CPUE$scaledResiduals), data = survey_data_com
 
 ###########################################PREDICTIONS##########################################
 
-#increase memory limit
-memory.limit(size = 400000)
-
 #load in raster data...
 raster_data_df <- read.csv(paste(getwd(),"/Data/raster_data_df_timeseries.csv", sep = ""))
 
@@ -282,38 +212,38 @@ raster_data_df[paste(covariates,"Scaled", sep="")] <- mapply(x = raster_data_df[
                                                                             scale = sd(y)))
 
 #make predictions
-presence_prediction_df <- predict(presence_model, newdata = raster_data_df, type = "response")
-CPUE_prediction_df <- predict(CPUE_model, newdata = raster_data_df)
+encounter_prediction_df <- predict(encounter_sdmTMB, newdata = raster_data_df, type = "response")
+CPUE_prediction_df <- predict(CPUE_sdmTMB, newdata = raster_data_df)
 #get standard errors
-presence_se <- predict(presence_model, newdata = raster_data_df, nsim = 500)
-CPUE_se <- predict(CPUE_model, newdata = raster_data_df, nsim = 500)
-if(nrow(presence_se)>nrow(raster_data_df))#remove possible extra rows... sdmTMB quirk
+encounter_se <- predict(encounter_sdmTMB, newdata = raster_data_df, nsim = 500)
+CPUE_se <- predict(CPUE_sdmTMB, newdata = raster_data_df, nsim = 500)
+if(nrow(encounter_se)>nrow(raster_data_df))#remove possible extra rows... sdmTMB quirk
 {
-  presence_se <- presence_se[-(nrow(raster_data_df)+1:nrow(presence_se)),]
+  encounter_se <- encounter_se[-(nrow(raster_data_df)+1:nrow(encounter_se)),]
   CPUE_se <- CPUE_se[-(nrow(raster_data_df)+1:nrow(CPUE_se)),]
 }
-presence_prediction_df$se <- apply(presence_se, 1, sd)
+encounter_prediction_df$se <- apply(encounter_se, 1, sd)
 CPUE_prediction_df$se <- apply(CPUE_se, 1, sd)
-#create final combined predictions, standard errors, and add to presence_prediction_df
-presence_prediction_df$combined_predict <- log(exp(CPUE_prediction_df$est+
-                                                     0.5*CPUE_model$sd_report$value[2]^2)*
-                                                 presence_prediction_df$est)
-presence_prediction_df$combined_se <- sqrt((presence_prediction_df$se)^2*
-                                             (1-presence_prediction_df$est)^2+(CPUE_prediction_df$se)^2)
+#create final combined predictions, standard errors, and add to encounter_prediction_df
+encounter_prediction_df$combined_predict <- log(exp(CPUE_prediction_df$est+
+                                                     0.5*CPUE_sdmTMB$sd_report$value[2]^2)*
+                                                 encounter_prediction_df$est)
+encounter_prediction_df$combined_se <- sqrt((encounter_prediction_df$se)^2*
+                                             (1-encounter_prediction_df$est)^2+(CPUE_prediction_df$se)^2)
 #create cutoff for low predictions
-presence_prediction_df$NAs <- ifelse(presence_prediction_df$combined_predict<(-8), "< -8", NA)
+encounter_prediction_df$NAs <- ifelse(encounter_prediction_df$combined_predict<(-8), "< -8", NA)
 
-#plot random field for presence (Figure S21)
-ggplot() + geom_raster(data = presence_prediction_df, aes(x = UTMX, y = UTMY, fill = est_rf)) +
+#plot random fields (spatial + spatio-temporal) for encounter model (Figure S22)
+ggplot() + geom_raster(data = encounter_prediction_df, aes(x = UTMX, y = UTMY, fill = est_rf)) +
   coord_equal() + scale_fill_gradientn(name = "", colours = viridis(100)) + 
   geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
   theme(text=element_text(size=16), axis.text=element_text(color="black")) + 
   coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
   geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
   ylab("Northings") + xlab("Eastings") +
-  ggtitle("Presence Model Random Effects") + facet_wrap(~year, ncol = 4)
+  ggtitle("Encounter Model Random Effects (Spatial + Spatio-Temporal)") + facet_wrap(~year, ncol = 4)
 
-#plot random field for conditional CPUE (Figure S22)
+#plot random fields (spatial + spatio-temporal) for conditional CPUE (Figure S23)
 ggplot() + geom_raster(data = CPUE_prediction_df, aes(x = UTMX, y = UTMY, fill = est_rf)) +
   coord_equal() + scale_fill_gradientn(name = "", colours = viridis(100)) + 
   geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
@@ -321,19 +251,19 @@ ggplot() + geom_raster(data = CPUE_prediction_df, aes(x = UTMX, y = UTMY, fill =
   coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
   geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
   ylab("Northings") + xlab("Eastings") +
-  ggtitle("CPUE Model Random Effects") + facet_wrap(~year, ncol = 4)
+  ggtitle("CPUE Model Random Effects (Spatial + Spatio-Temporal)") + facet_wrap(~year, ncol = 4)
 
-#plot the presence predictions (Figure S15)
-ggplot() + geom_raster(data = presence_prediction_df, aes(x = UTMX, y = UTMY, fill = est)) +
+#plot the encounter probability predictions (Figure S16)
+ggplot() + geom_raster(data = encounter_prediction_df, aes(x = UTMX, y = UTMY, fill = est)) +
   coord_equal() + scale_fill_gradientn(name = "", colours = viridis(100), limits = c(0,1)) + 
   geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
   theme(text=element_text(size=16), axis.text=element_text(color="black")) + 
   coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
   geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
   ylab("Northings") + xlab("Eastings") +
-  ggtitle("Predicted Probability of Presence") + facet_wrap(~year, ncol = 4)
+  ggtitle("Predicted Probability of an Encounter") + facet_wrap(~year, ncol = 4)
 
-#plot the conditional CPUE predictions (Figure S16)
+#plot the conditional CPUE predictions (Figure S17)
 ggplot() + geom_raster(data = CPUE_prediction_df, 
                        aes(x = UTMX, y = UTMY, fill = est)) +
   coord_equal() + scale_fill_gradientn(name = "", colours = viridis(100), limits = c(-6,11.5)) + 
@@ -342,11 +272,11 @@ ggplot() + geom_raster(data = CPUE_prediction_df,
   coord_cartesian(xlim = c(75, 1050), ylim = c(4600, 5250)) +
   geom_polygon(data = fortify(map1), aes(group = group, x = long, y = lat)) + 
   ylab("Northings") + xlab("Eastings") + 
-  ggtitle(expression(paste("Log(Predicted CPUE [kg/",km^{2},"]) [Conditional on Presence]"))) + 
+  ggtitle(expression(paste("Log(Predicted CPUE [kg/",km^{2},"]) [Given an Encounter]"))) + 
   facet_wrap(~year, ncol = 4)
 
-#plot the unconditional CPUE predictions (Figure S13)
-ggplot() + geom_raster(data = presence_prediction_df, 
+#plot the unconditional CPUE predictions (Figure S14)
+ggplot() + geom_raster(data = encounter_prediction_df, 
                        aes(x = UTMX, y = UTMY, fill = combined_predict)) +
   coord_equal() + scale_fill_gradientn(name = "", colours = viridis(100), 
                                        limits = c(-8,12), breaks = c(-8,-4,0,4,8,12))  + 
@@ -357,11 +287,11 @@ ggplot() + geom_raster(data = presence_prediction_df,
   ylab("Northings") + xlab("Eastings") +
   ggtitle(expression(paste("Log(Predicted CPUE [kg/",km^{2},"])"))) + facet_wrap(~year, ncol = 4) +
   new_scale_fill() + scale_fill_manual(name=NULL, values="black") + 
-  geom_raster(data = na.omit(presence_prediction_df[c("UTMX","UTMY","NAs")]), 
+  geom_raster(data = na.omit(encounter_prediction_df[c("UTMX","UTMY","NAs")]), 
               aes(x = UTMX, y = UTMY, fill = as.factor(NAs)))
 
-#get uncertainty in final predictions (Figure S14)
-ggplot() + geom_raster(data = presence_prediction_df, 
+#get uncertainty in final predictions (Figure S15)
+ggplot() + geom_raster(data = encounter_prediction_df, 
                        aes(x = UTMX, y = UTMY, fill = combined_se)) +
   coord_equal() + scale_fill_gradientn(name = "", colours = viridis(100), limits = c(0,6))  + 
   geom_polygon(data = fortify(map), aes(group = group, x = long, y = lat)) +
@@ -372,15 +302,15 @@ ggplot() + geom_raster(data = presence_prediction_df,
   ggtitle(expression(paste("Log(Predicted CPUE [kg/",km^{2},"]) - Std. Errors"))) + 
   facet_wrap(~year, ncol = 4)
 
-#save model and model output
-save.image(paste(getwd(), "/Workspace Files/sdmTMB.RData", sep = ""))
-
-#export prediction and standard error rasters for external use (i.e., in ArcGIS... Figures 3 and 4)
-prediction_raster <- raster_create(presence_prediction_df, "combined_predict", year_start = 2000)
-crs(prediction_raster) <- "+datum=WGS84 +proj=utm +zone=20T +units=km" 
-writeRaster(prediction_raster, paste(getwd(),"/Model Output/sdmTMB/sdmTMB_predictions.tif", sep = ""),
+#export prediction and standard error rasters for external use (i.e., in ArcGIS... Figures 4 and 6)
+sdmTMB_prediction_raster <- raster_create(encounter_prediction_df, "combined_predict", year_start = 2000)
+crs(sdmTMB_prediction_raster) <- "+datum=WGS84 +proj=utm +zone=20T +units=km" 
+writeRaster(sdmTMB_prediction_raster, paste(getwd(),"/Model Output/sdmTMB/sdmTMB_predictions.tif", sep = ""),
             format = "GTiff", bylayer = T, suffix = seq(2000,2019, by = 1), overwrite = T)
-se_raster <- raster_create(presence_prediction_df, "combined_se", year_start = 2000)
+se_raster <- raster_create(encounter_prediction_df, "combined_se", year_start = 2000)
 crs(se_raster) <- "+datum=WGS84 +proj=utm +zone=20T +units=km" 
 writeRaster(se_raster, paste(getwd(),"/Model Output/sdmTMB/sdmTMB_standard_errors.tif", sep = ""),
             format = "GTiff", bylayer = T, suffix = seq(2000,2019, by = 1), overwrite = T)
+
+#save model and raster predictions as .RData
+save(encounter_sdmTMB, CPUE_sdmTMB, sdmTMB_prediction_raster, file = "sdmTMB.RData")
