@@ -203,7 +203,7 @@ effects_plot_combined(CPUE_mgcv, CPUE_starve, CPUE_sdmTMB, mgcv_a = 11, sdmTMB_a
                       original_vector = survey_data_combined_CPUE$DEM_RDMVScaled, ylim = c(-2,3),
                       xlab = "RDMV", sig = c())
 
-######################FIGURES 6 AND APPENDIX S1: FIGURE S2 - RESERVE PLOTS###########################
+######################FIGURES 5 AND APPENDIX S1: FIGURE S2 - RESERVE PLOTS###########################
 
 #load polygons for reserves
 load("Data/reserves_shape_file.RData")
@@ -239,7 +239,7 @@ combined_prediction_df$model <- factor(
   levels = c("mgcv", "starve", "sdmTMB")
 )
 
-#density plots of the predictions inside reserves for all years and models (Figure 6)
+#density plots of the predictions inside reserves for all years and models (Figure 5)
 ggplot(combined_prediction_df, 
        aes(x = value, fill = model, color = model)) +
   geom_density(alpha = 0.17, size = 1.2) +
